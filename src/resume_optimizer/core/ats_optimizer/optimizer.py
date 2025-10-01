@@ -1,17 +1,18 @@
-
 # src/resume_optimizer/core/ats_optimizer/optimizer.py
 """
 ATS Optimizer module for improving resume compatibility with ATS systems.
-Implements Strategy and Observer patterns.
+Implements Strategy and Observer patterns with Gemini AI integration.
 """
 
 import logging
 import re
-from typing import Dict, List, Any
-from dataclasses import dataclass
+from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass, replace
 from enum import Enum
 
-from ..models import ResumeData, JobDescriptionData, OptimizationResult, OptimizationStatus
+from ..models import ResumeData, JobDescriptionData, OptimizationResult, OptimizationStatus, Experience
+from ...utils.exceptions import ValidationError, AIServiceError
+from ..ai_integration.gemini_client import GeminiClient
 
 
 class OptimizationRule(Enum):
@@ -271,6 +272,7 @@ class ResumeScorer:
 
     def _score_ats_format(self, resume_data: ResumeData) -> float:
         """Score ATS formatting compatibility."""
+        score = 1.0
         text = resume_data.raw_text
 
         # Check for standard sections
@@ -304,22 +306,216 @@ class ResumeScorer:
         return (length_score + achievement_score) / 2
 
 
-class ATSOptimizer:
-    """Main ATS optimization engine."""
+class GeminiResumeOptimizer:
+    """Uses Gemini AI to optimize resume content."""
 
-    def __init__(self):
+    def __init__(self, api_key: Optional[str] = None):
+        self.logger = logging.getLogger(__name__)
+        try:
+            self.gemini_client = GeminiClient(api_key=api_key)
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Gemini client: {e}")
+            raise e
+
+    def optimize_summary(self, current_summary: str, job_data: JobDescriptionData, applicant_name: str) -> str:
+        """Optimize professional summary using Gemini."""
+        if not self.gemini_client:
+            return current_summary
+
+        try:
+            keywords = job_data.required_skills + job_data.keywords[:5]  # Top keywords
+            prompt = f"""
+            Optimize this professional summary for ATS compatibility and job relevance.
+            
+            Current Summary: {current_summary}
+            
+            Job Title: {job_data.title}
+            Company: {job_data.company}
+            Key Requirements: {', '.join(job_data.required_skills[:8])}
+            Important Keywords: {', '.join(keywords)}
+            
+            Create a compelling 2-3 sentence professional summary that:
+            1. Incorporates relevant keywords naturally
+            2. Highlights alignment with the role
+            3. Uses strong action words
+            4. Remains truthful to the original content
+            5. Is ATS-friendly (no special formatting)
+            
+            Return only the optimized summary text.
+            """
+            
+            system_message = "You are an expert resume writer specializing in ATS optimization. Create compelling, keyword-rich content that remains truthful and professional."
+            
+            optimized_summary = self.gemini_client.invoke(system_message, prompt)
+            return optimized_summary.strip()
+            
+        except Exception as e:
+            self.logger.error(f"Failed to optimize summary with Gemini: {e}")
+            return current_summary
+
+    def optimize_experience_description(self, experience: Experience, job_data: JobDescriptionData) -> List[str]:
+        """Optimize experience descriptions using Gemini."""
+        if not self.gemini_client or not experience.description:
+            return experience.description or []
+
+        try:
+            current_desc = '\n'.join(experience.description)
+            relevant_keywords = [kw for kw in job_data.required_skills + job_data.keywords 
+                               if kw.lower() in current_desc.lower() or kw.lower() in experience.position.lower()][:6]
+            
+            prompt = f"""
+            Optimize these job experience bullet points for ATS compatibility:
+            
+            Position: {experience.position}
+            Company: {experience.company}
+            Current Description:
+            {current_desc}
+            
+            Target Job Requirements: {', '.join(job_data.required_skills[:6])}
+            Relevant Keywords to Incorporate: {', '.join(relevant_keywords)}
+            
+            Improve the bullet points to:
+            1. Start with strong action verbs
+            2. Include quantifiable achievements where possible
+            3. Incorporate relevant keywords naturally
+            4. Make them ATS-friendly (simple formatting)
+            5. Keep them truthful to the original content
+            6. Limit to 3-4 bullet points maximum
+            
+            Return only the bullet points, one per line, starting with "•"
+            """
+            
+            system_message = "You are an expert resume writer. Create impactful, ATS-optimized bullet points that showcase achievements with relevant keywords."
+            
+            optimized_desc = self.gemini_client.invoke(system_message, prompt)
+            
+            # Parse the response into bullet points
+            bullet_points = []
+            for line in optimized_desc.strip().split('\n'):
+                line = line.strip()
+                if line:
+                    # Remove bullet symbols and clean up
+                    cleaned_line = re.sub(r'^[•\-\*]\s*', '', line).strip()
+                    if cleaned_line:
+                        bullet_points.append(cleaned_line)
+            
+            return bullet_points[:4] if bullet_points else experience.description
+            
+        except Exception as e:
+            self.logger.error(f"Failed to optimize experience description with Gemini: {e}")
+            return experience.description or []
+
+    def enhance_skills_section(self, current_skills: List[str], job_data: JobDescriptionData) -> List[str]:
+        """Enhance skills section using Gemini recommendations."""
+        if not self.gemini_client:
+            return current_skills
+
+        try:
+            prompt = f"""
+            Optimize this skills list for the target job:
+            
+            Current Skills: {', '.join(current_skills)}
+            
+            Job Requirements: {', '.join(job_data.required_skills)}
+            Preferred Skills: {', '.join(job_data.preferred_skills[:5])}
+            Job Keywords: {', '.join(job_data.keywords[:8])}
+            
+            Provide an optimized skills list that:
+            1. Prioritizes job-relevant skills
+            2. Groups related skills logically
+            3. Uses industry-standard terminology
+            4. Includes both technical and soft skills
+            5. Maintains truthfulness to original skills
+            6. Limits to 15-20 skills maximum
+            
+            Return only the skills list, comma-separated.
+            """
+            
+            system_message = "You are an expert resume writer. Organize and optimize skills sections for maximum ATS compatibility and relevance."
+            
+            optimized_skills = self.gemini_client.invoke(system_message, prompt)
+            
+            # Parse skills from response
+            skills_list = []
+            for skill in optimized_skills.split(','):
+                skill = skill.strip()
+                if skill and len(skill) <= 50:  # Reasonable skill name length
+                    skills_list.append(skill)
+            
+            return skills_list[:20] if skills_list else current_skills
+            
+        except Exception as e:
+            self.logger.error(f"Failed to enhance skills with Gemini: {e}")
+            return current_skills
+
+    def generate_optimization_recommendations(self, resume_data: ResumeData, job_data: JobDescriptionData, 
+                                           missing_keywords: List[str]) -> List[str]:
+        """Generate specific optimization recommendations using Gemini."""
+        if not self.gemini_client:
+            return ["Consider incorporating more job-relevant keywords naturally into your resume"]
+
+        try:
+            prompt = f"""
+            Analyze this resume against the job requirements and provide specific optimization recommendations:
+            
+            Resume Summary: {resume_data.summary[:200]}...
+            Resume Skills: {', '.join(resume_data.skills[:10])}
+            
+            Job Title: {job_data.title}
+            Job Requirements: {', '.join(job_data.required_skills)}
+            Missing Keywords: {', '.join(missing_keywords[:8])}
+            
+            Provide 5-7 specific, actionable recommendations to improve ATS compatibility and job match:
+            1. Focus on missing keywords and skills
+            2. Content structure improvements
+            3. Formatting suggestions for ATS
+            4. Quantifiable achievement opportunities
+            5. Industry-specific terminology
+            
+            Return recommendations as a numbered list, each under 100 characters.
+            """
+            
+            system_message = "You are an ATS optimization expert. Provide specific, actionable recommendations to improve resume performance."
+            
+            recommendations_text = self.gemini_client.invoke(system_message, prompt)
+            
+            # Parse recommendations
+            recommendations = []
+            for line in recommendations_text.strip().split('\n'):
+                line = line.strip()
+                if line and (line[0].isdigit() or line.startswith('-') or line.startswith('•')):
+                    # Remove numbering and formatting
+                    clean_rec = re.sub(r'^\d+[\.\)]\s*|^[\-•]\s*', '', line).strip()
+                    if clean_rec and len(clean_rec) <= 200:
+                        recommendations.append(clean_rec)
+            
+            return recommendations[:7] if recommendations else ["Incorporate more job-relevant keywords naturally"]
+            
+        except Exception as e:
+            self.logger.error(f"Failed to generate recommendations with Gemini: {e}")
+            return ["Consider incorporating more job-relevant keywords naturally into your resume"]
+
+
+class ATSOptimizer:
+    """Main ATS optimization engine with Gemini AI integration."""
+
+    def __init__(self, gemini_api_key: Optional[str] = None):
         self.logger = logging.getLogger(__name__)
         self.compatibility_checker = ATSCompatibilityChecker()
         self.keyword_optimizer = KeywordOptimizer()
         self.scorer = ResumeScorer()
+        self.gemini_optimizer = GeminiResumeOptimizer(api_key=gemini_api_key)
 
-    def optimize(self, resume_data: ResumeData, job_data: JobDescriptionData, applicant_name: str, company_name: str) -> OptimizationResult:
-        """Perform comprehensive ATS optimization."""
+    def optimize(self, resume_data: ResumeData, job_data: JobDescriptionData, 
+                applicant_name: str, company_name: str) -> OptimizationResult:
+        """Perform comprehensive ATS optimization with Gemini AI."""
         try:
+            self.logger.info(f"Starting optimization for {applicant_name} at {company_name}")
             result = OptimizationResult(status=OptimizationStatus.PROCESSING)
 
             # Calculate original scores
-            result.original_score = self.scorer.score_resume(resume_data, job_data).overall * 100
+            original_scores = self.scorer.score_resume(resume_data, job_data)
+            result.original_score = original_scores.overall * 100
 
             # Run ATS compatibility check
             ats_check = self.compatibility_checker.check_compatibility(resume_data, job_data)
@@ -329,92 +525,200 @@ class ATSOptimizer:
             keyword_analysis = self.keyword_optimizer.optimize_keywords(resume_data, job_data)
             result.missing_keywords = keyword_analysis['missing_keywords']
 
-            # Generate comprehensive recommendations
-            result.recommendations = self._generate_recommendations(ats_check, keyword_analysis, resume_data, job_data)
-
-            # Create optimized resume (placeholder - would integrate with AI in practice)
-            result.optimized_resume = self._create_optimized_resume(resume_data, job_data, applicant_name, company_name)
+            # Create AI-optimized resume
+            result.optimized_resume = self._create_gemini_optimized_resume(
+                resume_data, job_data, applicant_name, company_name
+            )
 
             # Calculate optimized score
-            result.optimized_score = self.scorer.score_resume(result.optimized_resume, job_data).overall * 100
+            optimized_scores = self.scorer.score_resume(result.optimized_resume, job_data)
+            result.optimized_score = optimized_scores.overall * 100
+
+            # Generate AI-powered recommendations
+            result.recommendations = self._generate_comprehensive_recommendations(
+                ats_check, keyword_analysis, resume_data, job_data
+            )
 
             # Calculate improvements
-            result.improvements = self._calculate_improvements(result.original_score, result.optimized_score)
+            result.improvements = self._calculate_detailed_improvements(
+                original_scores, optimized_scores, result.recommendations
+            )
 
             result.status = OptimizationStatus.COMPLETED
+            self.logger.info(f"Optimization completed successfully. Score improved from {result.original_score:.1f} to {result.optimized_score:.1f}")
 
             return result
 
         except Exception as e:
             self.logger.error(f"Optimization failed: {e}")
             result = OptimizationResult(status=OptimizationStatus.FAILED)
-            return result
+            raise e
 
-    def _generate_recommendations(self, ats_check: Dict, keyword_analysis: Dict, resume_data: ResumeData, job_data: JobDescriptionData) -> List[str]:
-        """Generate comprehensive optimization recommendations."""
+    def _create_gemini_optimized_resume(self, resume_data: ResumeData, job_data: JobDescriptionData, 
+                                      applicant_name: str, company_name: str) -> ResumeData:
+        """Create an AI-optimized version of the resume using Gemini."""
+        try:
+            # Start with the original resume data
+            optimized = replace(resume_data)
+
+            # Update applicant name if provided
+            if applicant_name and applicant_name.strip():
+                optimized.contact_info.name = applicant_name.strip()
+
+            # Optimize professional summary
+            if resume_data.summary:
+                optimized.summary = self.gemini_optimizer.optimize_summary(
+                    resume_data.summary, job_data, applicant_name
+                )
+
+            # Optimize experience descriptions
+            if resume_data.experience:
+                optimized_experiences = []
+                for exp in resume_data.experience:
+                    optimized_desc = self.gemini_optimizer.optimize_experience_description(exp, job_data)
+                    optimized_exp = replace(exp, description=optimized_desc)
+                    optimized_experiences.append(optimized_exp)
+                optimized.experience = optimized_experiences
+
+            # Enhance skills section
+            if resume_data.skills:
+                optimized.skills = self.gemini_optimizer.enhance_skills_section(resume_data.skills, job_data)
+
+            # Update raw text with optimized content
+            optimized.raw_text = self._generate_optimized_raw_text(optimized)
+
+            self.logger.info("Resume optimization with Gemini completed successfully")
+            return optimized
+
+        except Exception as e:
+            self.logger.error(f"Failed to create Gemini-optimized resume: {e}")
+            # Return original data if optimization fails
+            raise e
+
+    def _generate_optimized_raw_text(self, resume_data: ResumeData) -> str:
+        """Generate optimized raw text from structured resume data."""
+        sections = []
+
+        # Contact Information
+        if resume_data.contact_info.name:
+            sections.append(resume_data.contact_info.name)
+        if resume_data.contact_info.email:
+            sections.append(f"Email: {resume_data.contact_info.email}")
+        if resume_data.contact_info.phone:
+            sections.append(f"Phone: {resume_data.contact_info.phone}")
+        if resume_data.contact_info.linkedin:
+            sections.append(f"LinkedIn: {resume_data.contact_info.linkedin}")
+
+        sections.append("")  # Empty line
+
+        # Professional Summary
+        if resume_data.summary:
+            sections.extend(["PROFESSIONAL SUMMARY", resume_data.summary, ""])
+
+        # Skills
+        if resume_data.skills:
+            sections.extend(["TECHNICAL SKILLS", "• " + "\n• ".join(resume_data.skills), ""])
+
+        # Experience
+        if resume_data.experience:
+            sections.append("PROFESSIONAL EXPERIENCE")
+            for exp in resume_data.experience:
+                exp_header = f"{exp.position} | {exp.company}"
+                if exp.start_date or exp.end_date:
+                    dates = f" | {exp.start_date or 'Present'} - {exp.end_date or 'Present'}"
+                    exp_header += dates
+                sections.append(exp_header)
+                if exp.description:
+                    sections.extend([f"• {desc}" for desc in exp.description])
+                sections.append("")
+
+        # Education
+        if resume_data.education:
+            sections.append("EDUCATION")
+            for edu in resume_data.education:
+                edu_line = f'{edu.degree} in {edu.field}' if (edu.degree and edu.field) else (edu.degree or 'Education')
+                if hasattr(edu, 'institution'):
+                    edu_line += f" | {edu.institution}"
+                sections.append(edu_line)
+            sections.append("")
+
+        # Certifications
+        if resume_data.certifications:
+            if type(resume_data.certifications) == list:
+                # list 
+                sections.extend(["CERTIFICATIONS", "• " + "\n• ".join(resume_data.certifications)])
+            else:
+                # str 
+                sections.extend(["CERTIFICATIONS", resume_data.certifications])
+
+        return "\n".join(sections)
+
+    def _generate_comprehensive_recommendations(self, ats_check: Dict, keyword_analysis: Dict, 
+                                             resume_data: ResumeData, job_data: JobDescriptionData) -> List[str]:
+        """Generate comprehensive optimization recommendations using Gemini AI."""
         recommendations = []
 
-        # ATS compatibility recommendations
+        # Get AI-generated recommendations
+        ai_recommendations = self.gemini_optimizer.generate_optimization_recommendations(
+            resume_data, job_data, keyword_analysis['missing_keywords']
+        )
+        recommendations.extend(ai_recommendations)
+
+        # Add ATS compatibility recommendations
         recommendations.extend(ats_check.get('suggestions', []))
 
-        # Keyword optimization recommendations
-        recommendations.extend(keyword_analysis.get('optimization_suggestions', []))
+        # Add keyword optimization recommendations
+        keyword_suggestions = keyword_analysis.get('optimization_suggestions', [])
+        recommendations.extend(keyword_suggestions[:3])  # Limit keyword suggestions
 
-        # General improvements
+        # Add scoring-based recommendations
         if keyword_analysis['keyword_score'] < 0.7:
-            recommendations.append("Increase keyword density by incorporating more job-relevant terms")
+            recommendations.append("Incorporate more job-specific keywords naturally throughout your resume")
 
-        if result.ats_compliance_score < 80:
-            recommendations.append("Improve ATS compatibility by using standard formatting and sections")
+        if ats_check['overall_score'] < 0.8:
+            recommendations.append("Improve ATS formatting by using standard section headers and simple formatting")
 
         # Content quality recommendations
         word_count = len(resume_data.raw_text.split())
         if word_count < 300:
-            recommendations.append("Expand resume content with more detailed descriptions")
+            recommendations.append("Expand resume with more detailed accomplishments and quantified results")
         elif word_count > 800:
-            recommendations.append("Condense resume content to improve readability")
+            recommendations.append("Streamline content to focus on most relevant and impactful achievements")
 
-        return recommendations
+        # Remove duplicates and limit to reasonable number
+        unique_recommendations = list(dict.fromkeys(recommendations))  # Preserve order while removing duplicates
+        return unique_recommendations[:10]
 
-    def _create_optimized_resume(self, resume_data: ResumeData, job_data: JobDescriptionData, applicant_name: str, company_name: str) -> ResumeData:
-        """Create an optimized version of the resume."""
-        # This is a simplified version - in practice, this would integrate with AI services
-        optimized = ResumeData(
-            contact_info=resume_data.contact_info,
-            summary=resume_data.summary,
-            skills=resume_data.skills,
-            experience=resume_data.experience,
-            education=resume_data.education,
-            certifications=resume_data.certifications,
-            languages=resume_data.languages,
-            raw_text=resume_data.raw_text,
-            file_path=resume_data.file_path,
-            file_type=resume_data.file_type
-        )
-
-        # Update contact info
-        if applicant_name:
-            optimized.contact_info.name = applicant_name
-
-        # Add missing skills that are relevant
-        missing_skills = set(job_data.required_skills) - set(resume_data.skills)
-        # In practice, you'd be more selective about which skills to add
-
-        return optimized
-
-    def _calculate_improvements(self, original_score: float, optimized_score: float) -> List[str]:
-        """Calculate and describe improvements made."""
+    def _calculate_detailed_improvements(self, original_scores: OptimizationScore, 
+                                       optimized_scores: OptimizationScore, 
+                                       recommendations: List[str]) -> List[str]:
+        """Calculate and describe detailed improvements made."""
         improvements = []
 
-        score_diff = optimized_score - original_score
+        score_diff = (optimized_scores.overall - original_scores.overall) * 100
 
         if score_diff > 0:
             improvements.append(f"Overall ATS score improved by {score_diff:.1f} points")
 
+        # Specific score improvements
+        keyword_diff = (optimized_scores.keyword_match - original_scores.keyword_match) * 100
+        if keyword_diff > 5:
+            improvements.append(f"Keyword matching improved by {keyword_diff:.1f}%")
+
+        skill_diff = (optimized_scores.skill_alignment - original_scores.skill_alignment) * 100
+        if skill_diff > 5:
+            improvements.append(f"Skill alignment with job requirements improved by {skill_diff:.1f}%")
+
+        content_diff = (optimized_scores.content_quality - original_scores.content_quality) * 100
+        if content_diff > 5:
+            improvements.append(f"Content quality score improved by {content_diff:.1f}%")
+
+        # AI-powered improvements
         improvements.extend([
-            "Enhanced keyword optimization for better ATS matching",
-            "Improved formatting for ATS compatibility",
-            "Strengthened alignment with job requirements"
+            "Professional summary optimized with relevant keywords and stronger positioning",
+            "Experience descriptions enhanced with action verbs and quantifiable achievements",
+            "Skills section reorganized to highlight job-relevant technical competencies",
+            "Content structure improved for better ATS parsing and readability"
         ])
 
         return improvements

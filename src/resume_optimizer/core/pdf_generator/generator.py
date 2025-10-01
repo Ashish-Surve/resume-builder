@@ -245,13 +245,17 @@ class ATSFriendlyPDFGenerator:
                 story.append(Paragraph(institution_text, self.styles['company_info']))
                 story.append(Spacer(1, 3))
 
-    def _add_certifications(self, story: list, certifications: list) -> None:
+    def _add_certifications(self, story: list, certifications: list | str) -> None:
         """Add certifications section."""
         story.append(Paragraph("CERTIFICATIONS", self.styles['section_header']))
+        if certifications is not None and isinstance(certifications, list):
+            for cert in certifications:
+                cert_text = f"• {cert}"
+                story.append(Paragraph(cert_text, self.styles['bullet']))
+        else:
+            story.append(Paragraph(certifications))
 
-        for cert in certifications:
-            cert_text = f"• {cert}"
-            story.append(Paragraph(cert_text, self.styles['bullet']))
+
 
         story.append(Spacer(1, 6))
 

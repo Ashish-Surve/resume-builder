@@ -1,19 +1,20 @@
-"""
-GeminiClient: LangChain wrapper around Google Gemini chat models.
-Requires:
-  - uv add langchain-google-genai
-  - GOOGLE_API_KEY in environment
-"""
-
-from typing import List
+from typing import List, Optional
+import os
+from pydantic import SecretStr
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, SystemMessage
-
+from langchain_core.messages import SystemMessage, HumanMessage
 
 class GeminiClient:
-    def __init__(self, api_key: str | None = None, model: str = "gemini-2.5-flash", temperature: float = 0.7):
-        # If api_key is None, ChatGoogleGenerativeAI will read from GOOGLE_API_KEY env var
-        self.chat = ChatGoogleGenerativeAI(model=model, temperature=temperature, api_key=api_key)
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "gemini-2.5-flash",
+        temperature: float = 0.7,
+    ):
+        # Use env if not provided; match expected SecretStr | None
+        key = api_key or os.getenv("GOOGLE_API_KEY")
+        secret = SecretStr(key) if key is not None else None
+        self.chat = ChatGoogleGenerativeAI(model=model, temperature=temperature, api_key=secret)
 
     def invoke(self, system: str, user: str) -> str:
         msgs = [SystemMessage(content=system), HumanMessage(content=user)]
