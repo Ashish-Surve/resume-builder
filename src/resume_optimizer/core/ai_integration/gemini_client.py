@@ -19,18 +19,13 @@ class GeminiClient:
     - Exponential backoff on rate limit errors
 
     Model Options (FREE tier):
-    - gemini-1.5-flash: 15 RPM, 1500/day (RECOMMENDED - fastest rate limit)
-    - gemini-2.0-flash: 10 RPM, 1500/day (better reasoning)
-    - gemini-2.5-flash: 2 RPM, 20/day (⚠️ very limited, not recommended)
+    - gemini-2.5-flash-lite: RECOMMENDED - fastest, most cost-effective, best for most tasks
     """
 
     # Model-specific rate limits (requests per minute)
     MODEL_RATE_LIMITS = {
-        "gemini-1.5-flash": 14,  # 15 RPM limit, use 14 for safety
-        "gemini-2.0-flash": 9,   # 10 RPM limit, use 9 for safety
-        "gemini-2.5-flash": 2,   # 2 RPM limit (very restrictive)
-        "gemini-1.5-pro": 2,     # Pro models have lower limits
-        "gemini-2.0-pro": 2,
+        "gemini-2.5-flash-lite": 4,  # Fast and efficient for resume/job analysis
+        "gemini-2.5-pro": 2,         # More capable but slower
     }
 
     def __init__(
@@ -47,8 +42,8 @@ class GeminiClient:
 
         Args:
             api_key: Google API key (defaults to GOOGLE_API_KEY env var)
-            model: Model name (default: gemini-1.5-flash)
-                   Options: gemini-1.5-flash, gemini-2.0-flash, etc.
+            model: Model name (default: gemini-2.5-flash-lite)
+                   ONLY use: gemini-2.5-flash-lite (other models are deprecated)
             temperature: Temperature for generation (0.0-1.0)
             enable_cache: Enable response caching (default: True)
             cache_ttl_hours: Cache time-to-live in hours (default: 24)
