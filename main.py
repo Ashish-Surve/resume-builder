@@ -57,23 +57,18 @@ def validate_environment() -> None:
 
 def run_streamlit_app() -> None:
     """Launch the Streamlit application."""
-    import streamlit.web.cli as stcli
-    import sys
+    import subprocess
 
     try:
         logging.info("Starting Resume Optimizer Streamlit application...")
 
-        # Set up streamlit arguments
-        sys.argv = [
-            "streamlit", 
-            "run", 
-            str(Path("src") / "resume_optimizer" / "streamlit_ui" / "app.py"),
-            "--server.port=8501",
-            "--server.address=localhost"
-        ]
+        app_path = Path("src") / "resume_optimizer" / "streamlit_ui" / "app.py"
 
-        # Run streamlit
-        stcli.main()
+        # Run streamlit as subprocess
+        subprocess.run(
+            ["streamlit", "run", str(app_path)],
+            cwd=project_root
+        )
 
     except Exception as e:
         logging.error(f"Streamlit application failed: {e}")
