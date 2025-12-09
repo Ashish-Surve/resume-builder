@@ -7,7 +7,7 @@ Implements Strategy and Observer patterns with Gemini AI integration.
 import logging
 import re
 from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import Enum
 
 from ..models import ResumeData, JobDescriptionData, OptimizationResult, OptimizationStatus, Experience
@@ -405,6 +405,96 @@ class GeminiResumeOptimizer:
             self.logger.error(f"Failed to optimize experience description with Gemini: {e}")
             return experience.description or []
 
+    def optimize_all_experiences_batch(self, experiences: List[Experience], job_data: JobDescriptionData) -> List[Experience]:
+        """
+        Optimize all experience descriptions in a single API call for efficiency.
+        This reduces API calls from N to 1, significantly improving rate limiting.
+        """
+        if not self.gemini_client or not experiences:
+            return experiences
+
+        try:
+            # Build batch prompt with all experiences
+            experiences_text = []
+            for i, exp in enumerate(experiences, 1):
+                exp_text = f"""
+                Experience #{i}:
+                Position: {exp.position}
+                Company: {exp.company}
+                Duration: {exp.duration or 'Not specified'}
+                Current Description:
+                {chr(10).join(exp.description) if exp.description else 'No description'}
+                """
+                experiences_text.append(exp_text.strip())
+
+            all_experiences = "\n\n---\n\n".join(experiences_text)
+
+            prompt = f"""
+            Optimize ALL of these job experiences for ATS compatibility in a single response.
+
+            {all_experiences}
+
+            Target Job Requirements: {', '.join(job_data.required_skills[:8])}
+            Key Keywords: {', '.join(job_data.keywords[:10])}
+
+            For EACH experience, provide:
+            1. 3-4 optimized bullet points starting with strong action verbs
+            2. Quantifiable achievements where applicable
+            3. Relevant keywords incorporated naturally
+            4. ATS-friendly formatting (no special characters)
+            5. Truthful to original content
+
+            Format your response as JSON with this structure:
+            {{
+              "Experience_1": ["bullet 1", "bullet 2", "bullet 3"],
+              "Experience_2": ["bullet 1", "bullet 2", "bullet 3"],
+              ...
+            }}
+
+            Return ONLY the JSON object, nothing else.
+            """
+
+            system_message = "You are an expert resume writer. Create impactful, ATS-optimized bullet points for multiple job experiences efficiently."
+
+            response = self.gemini_client.invoke(system_message, prompt)
+
+            # Parse JSON response
+            import json
+            try:
+                optimized_data = json.loads(response)
+            except json.JSONDecodeError:
+                # Fallback: try to extract JSON from response
+                json_match = re.search(r'\{.*\}', response, re.DOTALL)
+                if json_match:
+                    optimized_data = json.loads(json_match.group())
+                else:
+                    raise ValueError("Could not parse JSON from response")
+
+            # Apply optimizations to experiences
+            optimized_experiences = []
+            for i, exp in enumerate(experiences, 1):
+                key = f"Experience_{i}"
+                if key in optimized_data and optimized_data[key]:
+                    optimized_exp = exp.model_copy(update={'description': optimized_data[key]})
+                    optimized_experiences.append(optimized_exp)
+                else:
+                    # Keep original if optimization failed for this experience
+                    optimized_experiences.append(exp)
+
+            self.logger.info(f"Batch optimized {len(experiences)} experiences in single API call")
+            return optimized_experiences
+
+        except Exception as e:
+            self.logger.error(f"Failed to batch optimize experiences with Gemini: {e}")
+            # Fall back to individual optimization if batch fails
+            self.logger.info("Falling back to individual experience optimization")
+            optimized_experiences = []
+            for exp in experiences:
+                optimized_desc = self.optimize_experience_description(exp, job_data)
+                optimized_exp = exp.model_copy(update={'description': optimized_desc})
+                optimized_experiences.append(optimized_exp)
+            return optimized_experiences
+
     def enhance_skills_section(self, current_skills: List[str], job_data: JobDescriptionData) -> List[str]:
         """Enhance skills section using Gemini recommendations."""
         if not self.gemini_client:
@@ -558,8 +648,8 @@ class ATSOptimizer:
                                       applicant_name: str, company_name: str) -> ResumeData:
         """Create an AI-optimized version of the resume using Gemini."""
         try:
-            # Start with the original resume data
-            optimized = replace(resume_data)
+            # Start with the original resume data (Pydantic's model_copy creates a deep copy)
+            optimized = resume_data.model_copy(deep=True)
 
             # Update applicant name if provided
             if applicant_name and applicant_name.strip():
@@ -571,13 +661,11 @@ class ATSOptimizer:
                     resume_data.summary, job_data, applicant_name
                 )
 
-            # Optimize experience descriptions
+            # Optimize experience descriptions (batch processing for efficiency)
             if resume_data.experience:
-                optimized_experiences = []
-                for exp in resume_data.experience:
-                    optimized_desc = self.gemini_optimizer.optimize_experience_description(exp, job_data)
-                    optimized_exp = replace(exp, description=optimized_desc)
-                    optimized_experiences.append(optimized_exp)
+                optimized_experiences = self.gemini_optimizer.optimize_all_experiences_batch(
+                    resume_data.experience, job_data
+                )
                 optimized.experience = optimized_experiences
 
             # Enhance skills section

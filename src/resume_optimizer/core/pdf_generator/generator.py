@@ -11,7 +11,7 @@ from typing import Dict
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, KeepTogether
 from reportlab.lib.colors import black
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 
@@ -184,57 +184,150 @@ class ATSFriendlyPDFGenerator:
 
         story.append(Spacer(1, 6))
 
-    def _add_summary(self, story: list, summary: str) -> None:
-        """Add professional summary section."""
-        story.append(Paragraph("PROFESSIONAL SUMMARY", self.styles['section_header']))
-        story.append(Paragraph(summary, self.styles['body']))
-        story.append(Spacer(1, 6))
+    def _add_summary(self, story: list, summary) -> None:
+        """Add professional summary section, flattening dict/JSON if needed."""
+        import json
+        def flatten_summary(val):
+            import json
+            # If dict, extract the first value (e.g., 'optimized_summary' or 'summary')
+            if isinstance(val, dict):
+                for k in ['optimized_summary', 'summary', 'value']:
+                    if k in val:
+                        return flatten_summary(val[k])
+                # fallback: first value
+                if val:
+                    return flatten_summary(next(iter(val.values())))
+                return ''
+            if isinstance(val, list):
+                # Join list items as sentences
+                return ' '.join(str(x).strip() for x in val if x)
+            if isinstance(val, str):
+                s = val.strip()
+                # Try to parse JSON string
+                if s.startswith('{'):
+                    try:
+                        parsed = json.loads(s)
+                        return flatten_summary(parsed)
+                    except Exception:
+                        pass
+                # Remove leading/trailing brackets/quotes
+                s = s.strip('"\'{}[]')
+                return s
+            return str(val)
+        section = []
+        section.append(Paragraph("PROFESSIONAL SUMMARY", self.styles['section_header']))
+        section.append(Paragraph(flatten_summary(summary), self.styles['body']))
+        section.append(Spacer(1, 6))
+        story.append(KeepTogether(section))
 
-    def _add_skills(self, story: list, skills: list) -> None:
-        """Add skills section."""
-        story.append(Paragraph("TECHNICAL SKILLS", self.styles['section_header']))
+    def _add_skills(self, story: list, skills) -> None:
+        """Add skills section, flattening dict/JSON if needed."""
+        import json
+        def flatten_skills(val):
+            import re, json
+            def pre_clean(s):
+                # Remove curly braces, quotes, and 'skills' key, and leading/trailing bullets
+                s = s.replace('{', '').replace('}', '').replace('"', '').replace("'", '')
+                s = re.sub(r'\bskills\b\s*:\s*', '', s, flags=re.IGNORECASE)
+                s = s.strip()
+                # Remove leading/trailing bullets and whitespace
+                s = re.sub(r'^[•\u2022\u2023\u25CF\u2024•·\*\|,;\n\r\-\s]+', '', s)
+                s = re.sub(r'[•\u2022\u2023\u25CF\u2024•·\*\|,;\n\r\-\s]+$', '', s)
+                return s
 
-        # Group skills by category (simplified approach)
-        skills_text = " • ".join(skills)
-        story.append(Paragraph(skills_text, self.styles['body']))
-        story.append(Spacer(1, 6))
+            def split_skills(s):
+                s = pre_clean(s)
+                # Split on all common separators, including bullets, dots, pipes, commas, semicolons, and newlines
+                items = re.split(r'[•\u2022\u2023\u25CF\u2024•·\*\|,;\n\r\-]+', s)
+                return [item.strip() for item in items if item and item.strip()]
+
+            # If dict, extract 'skills' key or flatten all values
+            if isinstance(val, dict):
+                if 'skills' in val:
+                    return flatten_skills(val['skills'])
+                # fallback: flatten all values
+                flat = []
+                for v in val.values():
+                    flat.extend(flatten_skills(v))
+                return flat
+            # If list, flatten all items
+            if isinstance(val, list):
+                flat = []
+                for x in val:
+                    flat.extend(flatten_skills(x))
+                return flat
+            # If string, try to parse as JSON array or split
+            if isinstance(val, str):
+                s = val.strip()
+                # Try to parse JSON array
+                if s.startswith('['):
+                    try:
+                        parsed = json.loads(s)
+                        if isinstance(parsed, list):
+                            return flatten_skills(parsed)
+                    except Exception:
+                        pass
+                # Try to parse JSON object
+                if s.startswith('{'):
+                    try:
+                        parsed = json.loads(s)
+                        return flatten_skills(parsed)
+                    except Exception:
+                        pass
+                return split_skills(s)
+            # fallback: treat as string
+            return split_skills(str(val))
+
+        section = []
+        section.append(Paragraph("TECHNICAL SKILLS", self.styles['section_header']))
+        skills_list = flatten_skills(skills)
+        skills_text = " • ".join(skills_list)
+        section.append(Paragraph(skills_text, self.styles['body']))
+        section.append(Spacer(1, 6))
+        story.append(KeepTogether(section))
 
     def _add_experience(self, story: list, experiences: list) -> None:
         """Add work experience section."""
-        story.append(Paragraph("PROFESSIONAL EXPERIENCE", self.styles['section_header']))
+        section = []
+        section.append(Paragraph("PROFESSIONAL EXPERIENCE", self.styles['section_header']))
 
         for exp in experiences:
+            exp_section = []
             # Job title and company
             if exp.position and exp.company:
                 title_text = f"<b>{exp.position}</b>"
-                story.append(Paragraph(title_text, self.styles['job_title']))
+                exp_section.append(Paragraph(title_text, self.styles['job_title']))
 
                 company_text = f"{exp.company}"
                 if exp.start_date or exp.end_date:
                     date_range = f"{exp.start_date or ''} - {exp.end_date or 'Present'}"
                     company_text += f" | {date_range}"
 
-                story.append(Paragraph(company_text, self.styles['company_info']))
+                exp_section.append(Paragraph(company_text, self.styles['company_info']))
 
             # Job description
             for desc in exp.description:
                 if desc.strip():
                     bullet_text = f"• {desc}"
-                    story.append(Paragraph(bullet_text, self.styles['bullet']))
+                    exp_section.append(Paragraph(bullet_text, self.styles['bullet']))
 
-            story.append(Spacer(1, 6))
+            exp_section.append(Spacer(1, 6))
+            section.append(KeepTogether(exp_section))
+        story.append(KeepTogether(section))
 
     def _add_education(self, story: list, education: list) -> None:
         """Add education section."""
-        story.append(Paragraph("EDUCATION", self.styles['section_header']))
+        section = []
+        section.append(Paragraph("EDUCATION", self.styles['section_header']))
 
         for edu in education:
+            edu_section = []
             if edu.degree and edu.institution:
                 edu_text = f"<b>{edu.degree}</b>"
                 if edu.field:
                     edu_text += f" in {edu.field}"
 
-                story.append(Paragraph(edu_text, self.styles['job_title']))
+                edu_section.append(Paragraph(edu_text, self.styles['job_title']))
 
                 institution_text = edu.institution
                 if edu.graduation_date:
@@ -242,22 +335,31 @@ class ATSFriendlyPDFGenerator:
                 if edu.gpa:
                     institution_text += f" | GPA: {edu.gpa}"
 
-                story.append(Paragraph(institution_text, self.styles['company_info']))
-                story.append(Spacer(1, 3))
+                edu_section.append(Paragraph(institution_text, self.styles['company_info']))
+                edu_section.append(Spacer(1, 3))
+                section.append(KeepTogether(edu_section))
+        story.append(KeepTogether(section))
 
     def _add_certifications(self, story: list, certifications: list | str) -> None:
         """Add certifications section."""
-        story.append(Paragraph("CERTIFICATIONS", self.styles['section_header']))
-        if certifications is not None and isinstance(certifications, list):
-            for cert in certifications:
-                cert_text = f"• {cert}"
-                story.append(Paragraph(cert_text, self.styles['bullet']))
-        else:
-            story.append(Paragraph(certifications))
+        import re
+        section = []
+        section.append(Paragraph("CERTIFICATIONS", self.styles['section_header']))
 
+        if certifications:
+            if isinstance(certifications, list):
+                for cert in certifications:
+                    cert_text = f"• {cert}"
+                    section.append(Paragraph(cert_text, self.styles['bullet']))
+            elif isinstance(certifications, str):
+                # Split string by bullets or newlines and format properly
+                cert_list = [c.strip() for c in re.split(r'[•\n]', certifications) if c.strip()]
+                for cert in cert_list:
+                    cert_text = f"• {cert}"
+                    section.append(Paragraph(cert_text, self.styles['bullet']))
 
-
-        story.append(Spacer(1, 6))
+        section.append(Spacer(1, 6))
+        story.append(KeepTogether(section))
 
 
 class PDFGeneratorFactory:

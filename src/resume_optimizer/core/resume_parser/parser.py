@@ -1,5 +1,5 @@
 """
-Resume parser module using spaCy and other NLP libraries with Gemini fallback.
+Resume parser module using spaCy and other NLP libraries with gm fallback.
 Implements Strategy pattern for different parsing approaches.
 """
 
@@ -11,43 +11,10 @@ import spacy
 from pypdf import PdfReader
 import docx
 import re
-from dataclasses import dataclass
 from datetime import datetime
 
 from ...utils.exceptions import ParsingError, FileProcessingError
-from ..models import ResumeData, ContactInfo, FileType
-from ..ai_integration.gemini_client import GeminiClient
-
-
-# Define Experience and Education models to match what optimizer expects
-@dataclass
-class Experience:
-    """Experience entry model."""
-    company: str = ""
-    position: str = ""
-    duration: str = ""
-    description: List[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    
-    def __post_init__(self):
-        if self.description is None:
-            self.description = []
-
-
-@dataclass 
-class Education:
-    """Education entry model."""
-    institution: str = ""
-    degree: str = ""
-    field: str = ""
-    year: str = ""
-    gpa: Optional[str] = None
-    description: List[str] = None
-    
-    def __post_init__(self):
-        if self.description is None:
-            self.description = []
+from ..models import ResumeData, ContactInfo, FileType, Experience, Education
 
 
 class BaseResumeParser(ABC):
@@ -433,73 +400,10 @@ class SectionExtractor:
         return None
 
 
-class GeminiResumeParser:
-    """Fallback parser using Gemini AI for complex resume parsing."""
-    
-    def __init__(self, gemini_client: GeminiClient):
-        self.gemini_client = gemini_client
-        self.logger = logging.getLogger(__name__)
-    
-    def parse_with_gemini(self, text: str) -> Dict[str, Any]:
-        """Use Gemini to parse resume when traditional parsing fails."""
-        try:
-            system_prompt = """You are an expert resume parser. Extract structured information from the resume text and return it in JSON format with these fields:
-            - name: Full name of the person
-            - email: Email address
-            - phone: Phone number
-            - linkedin: LinkedIn profile URL
-            - github: GitHub profile URL
-            - summary: Professional summary or objective
-            - skills: List of technical and professional skills
-            - experience: List of work experiences with company, position, duration, and description
-            - education: List of education entries with institution, degree, field, year
-            - certifications: Certifications and credentials
-            - projects: Notable projects (if mentioned)
-
-            For experience and education, return as arrays of objects with proper structure.
-            Return only valid JSON, no additional text."""
-            
-            user_prompt = f"Parse this resume text:\n\n{text}"
-            
-            response = self.gemini_client.invoke(system_prompt, user_prompt)
-            
-            # Try to parse JSON response
-            import json
-            try:
-                parsed_data = json.loads(response)
-                return parsed_data
-            except json.JSONDecodeError:
-                # If not valid JSON, try to extract sections manually from response
-                self.logger.warning("Gemini response is not valid JSON, using fallback extraction")
-                return self._extract_from_text_response(response)
-                
-        except Exception as e:
-            self.logger.error(f"Gemini parsing failed: {e}")
-            return {}
-    
-    def _extract_from_text_response(self, response: str) -> Dict[str, Any]:
-        """Extract data from Gemini's text response when JSON parsing fails."""
-        data = {}
-        
-        # Extract email
-        email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', response)
-        if email_match:
-            data['email'] = email_match.group()
-        
-        # Extract skills (look for lists)
-        skills_section = re.search(r'skills?[:\-\s]*(.*?)(?:\n\n|\n[A-Z])', response, re.IGNORECASE | re.DOTALL)
-        if skills_section:
-            skills_text = skills_section.group(1)
-            skills = re.findall(r'[A-Za-z][A-Za-z0-9\s\.\+#-]+', skills_text)
-            data['skills'] = [skill.strip() for skill in skills if len(skill.strip()) > 2][:20]
-        
-        return data
-
-
 class SpacyResumeParser(BaseResumeParser):
-    """Enhanced resume parser using spaCy NLP library with Gemini fallback."""
+    """Enhanced resume parser using spaCy NLP library"""
 
-    def __init__(self, gemini_client: Optional[GeminiClient] = None):
+    def __init__(self):
         try:
             self.nlp = spacy.load("en_core_web_sm")
         except OSError:
@@ -511,7 +415,6 @@ class SpacyResumeParser(BaseResumeParser):
         self.section_extractor = SectionExtractor()
         self.experience_extractor = ExperienceExtractor()
         self.education_extractor = EducationExtractor()
-        self.gemini_parser = GeminiResumeParser(gemini_client) if gemini_client else None
         self.logger = logging.getLogger(__name__)
 
     def parse(self, file_path: Path) -> ResumeData:
@@ -566,14 +469,9 @@ class SpacyResumeParser(BaseResumeParser):
             # Check if parsing was successful (has meaningful data)
             if self._is_parsing_successful(resume_data):
                 return resume_data
-            
-            # Fallback to Gemini if available and traditional parsing failed
-            if self.gemini_parser:
-                self.logger.info("Traditional parsing yielded limited results, trying Gemini fallback")
-                gemini_data = self.gemini_parser.parse_with_gemini(raw_text)
-                resume_data = self._merge_gemini_data(resume_data, gemini_data)
-            
-            return resume_data
+            else:
+                self.logger.info("SpaCy parsing yielded insufficient data, afallback.")
+                raise ParsingError("Insufficient data extracted with spaCy.")
 
         except Exception as e:
             self.logger.error(f"Failed to parse resume: {e}")
@@ -591,68 +489,7 @@ class SpacyResumeParser(BaseResumeParser):
                       getattr(resume_data, 'summary', ''))
         
         return has_contact and has_content
-
-    def _merge_gemini_data(self, resume_data: ResumeData, gemini_data: Dict[str, Any]) -> ResumeData:
-        """Merge Gemini-parsed data with existing resume data."""
-        if not gemini_data:
-            return resume_data
-        
-        # Update contact info if missing
-        if gemini_data.get('name') and not resume_data.contact_info.name:
-            resume_data.contact_info.name = gemini_data['name']
-        if gemini_data.get('email') and not resume_data.contact_info.email:
-            resume_data.contact_info.email = gemini_data['email']
-        if gemini_data.get('phone') and not resume_data.contact_info.phone:
-            resume_data.contact_info.phone = gemini_data['phone']
-        if gemini_data.get('linkedin') and not resume_data.contact_info.linkedin:
-            resume_data.contact_info.linkedin = gemini_data['linkedin']
-        if gemini_data.get('github') and not resume_data.contact_info.github:
-            resume_data.contact_info.github = gemini_data['github']
-        
-        # Merge experience if missing
-        gemini_exp = gemini_data.get('experience', [])
-        if isinstance(gemini_exp, list) and not resume_data.experience:
-            for exp_data in gemini_exp:
-                if isinstance(exp_data, dict):
-                    exp_obj = Experience(
-                        company=exp_data.get('company', ''),
-                        position=exp_data.get('position', ''),
-                        duration=exp_data.get('duration', ''),
-                        description=exp_data.get('description', []) if isinstance(exp_data.get('description'), list) else [str(exp_data.get('description', ''))]
-                    )
-                    resume_data.experience.append(exp_obj)
-        
-        # Merge education if missing
-        gemini_edu = gemini_data.get('education', [])
-        if isinstance(gemini_edu, list) and not resume_data.education:
-            for edu_data in gemini_edu:
-                if isinstance(edu_data, dict):
-                    edu_obj = Education(
-                        institution=edu_data.get('institution', ''),
-                        degree=edu_data.get('degree', ''),
-                        field=edu_data.get('field', ''),
-                        year=edu_data.get('year', '')
-                    )
-                    resume_data.education.append(edu_obj)
-        
-        # Update other sections if missing or empty
-        if gemini_data.get('summary') and hasattr(resume_data, 'summary') and not resume_data.summary:
-            resume_data.summary = gemini_data['summary']
-        if gemini_data.get('certifications') and hasattr(resume_data, 'certifications') and not resume_data.certifications:
-            resume_data.certifications = gemini_data['certifications']
-        if gemini_data.get('projects') and hasattr(resume_data, 'projects') and not resume_data.projects:
-            resume_data.projects = gemini_data['projects']
-        
-        # Merge skills
-        gemini_skills = gemini_data.get('skills', [])
-        if isinstance(gemini_skills, list):
-            existing_skills = set(skill.lower() for skill in resume_data.skills)
-            for skill in gemini_skills:
-                if isinstance(skill, str) and skill.lower() not in existing_skills:
-                    resume_data.skills.append(skill)
-        
-        return resume_data
-
+    
     def _get_file_type(self, file_path: Path) -> FileType:
         """Determine file type from extension."""
         suffix = file_path.suffix.lower()
@@ -675,15 +512,3 @@ class SpacyResumeParser(BaseResumeParser):
             return self.text_extractor.extract_from_txt(file_path)
         else:
             raise ParsingError(f"Unsupported file type: {file_type}")
-
-
-class ResumeParserFactory:
-    """Factory class for creating resume parsers."""
-
-    @staticmethod
-    def create_parser(parser_type: str = "spacy", gemini_client: Optional[GeminiClient] = None) -> BaseResumeParser:
-        """Create a resume parser instance."""
-        if parser_type == "spacy":
-            return SpacyResumeParser(gemini_client=gemini_client)
-        else:
-            raise ValueError(f"Unknown parser type: {parser_type}")
