@@ -84,7 +84,6 @@ resume_optimizer = "resume_optimizer.main:main"
 resume-optimizer = "resume_optimizer.main:main"
 
 [tool.uv]
-# Development dependencies (uv-specific)
 dev-dependencies = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",

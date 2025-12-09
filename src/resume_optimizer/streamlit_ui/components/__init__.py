@@ -1,1 +1,1 @@
-"""Package initialization."""
+"""UI components for Streamlit interface."""
