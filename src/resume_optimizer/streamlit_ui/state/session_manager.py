@@ -25,11 +25,14 @@ class SessionStateManager:
         if 'uploaded_file_path' not in st.session_state:
             st.session_state.uploaded_file_path = None
 
+        if 'uploaded_file_name' not in st.session_state:
+            st.session_state.uploaded_file_name = None
+
         if 'parser_choice' not in st.session_state:
             st.session_state.parser_choice = 'spacy'
 
         if 'applicant_name' not in st.session_state:
-            st.session_state.applicant_name = ''
+            st.session_state.applicant_name = 'Ashish Surve'
 
         if 'company_name' not in st.session_state:
             st.session_state.company_name = ''
@@ -42,6 +45,10 @@ class SessionStateManager:
 
         if 'stage1_confirmed' not in st.session_state:
             st.session_state.stage1_confirmed = False
+
+        # Auto-save tracking
+        if 'last_auto_save' not in st.session_state:
+            st.session_state.last_auto_save = None
 
         # Stage 2: Job Analysis
         if 'job_description_text' not in st.session_state:
@@ -73,12 +80,20 @@ class SessionStateManager:
         if 'pdf_path' not in st.session_state:
             st.session_state.pdf_path = None
 
+        # Generated files tracking
+        if 'generated_files' not in st.session_state:
+            st.session_state.generated_files = {}
+
         # Tracking flags for edits
         if 'resume_edited_after_confirmation' not in st.session_state:
             st.session_state.resume_edited_after_confirmation = False
 
         if 'job_edited_after_confirmation' not in st.session_state:
             st.session_state.job_edited_after_confirmation = False
+
+        # Stage 4 edit tracking
+        if 'resume_edited_after_stage4' not in st.session_state:
+            st.session_state.resume_edited_after_stage4 = False
 
     @staticmethod
     def reset_session() -> None:

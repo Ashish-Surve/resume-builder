@@ -80,7 +80,7 @@ def render_resume_data_editor(resume_data: ResumeData) -> ResumeData:
     skills_df = pd.DataFrame({"Skill": data.skills or []})
     edited_skills = st.data_editor(
         skills_df,
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="skills_editor"
     )
@@ -92,6 +92,20 @@ def render_resume_data_editor(resume_data: ResumeData) -> ResumeData:
     st.subheader("💼 Work Experience")
     if not data.experience:
         data.experience = []
+
+    def is_experience_filled(exp):
+        """Check if experience has at least one meaningful field filled."""
+        return any([
+            getattr(exp, 'company', None) and exp.company.strip(),
+            getattr(exp, 'position', None) and exp.position.strip(),
+            getattr(exp, 'duration', None) and exp.duration.strip(),
+            getattr(exp, 'description', None) and any(d.strip() for d in exp.description),
+            getattr(exp, 'skills_used', None) and any(s.strip() for s in exp.skills_used)
+        ])
+
+    # Modal-like form state for experience
+    if 'show_exp_form' not in st.session_state:
+        st.session_state['show_exp_form'] = False
 
     # Experience entries
     for i, exp in enumerate(data.experience):
@@ -119,7 +133,7 @@ def render_resume_data_editor(resume_data: ResumeData) -> ResumeData:
             desc_df = pd.DataFrame({"Description": exp.description or []})
             edited_desc = st.data_editor(
                 desc_df,
-                use_container_width=True,
+                width='stretch',
                 num_rows="dynamic",
                 key=f"exp_desc_{i}"
             )
@@ -129,7 +143,7 @@ def render_resume_data_editor(resume_data: ResumeData) -> ResumeData:
             skills_used_df = pd.DataFrame({"Skill": exp.skills_used or []})
             edited_skills_used = st.data_editor(
                 skills_used_df,
-                use_container_width=True,
+                width='stretch',
                 num_rows="dynamic",
                 key=f"exp_skills_{i}"
             )
@@ -139,10 +153,48 @@ def render_resume_data_editor(resume_data: ResumeData) -> ResumeData:
                 data.experience.pop(i)
                 st.rerun()
 
-    # Add new experience button
-    if st.button("➕ Add Experience", use_container_width=True):
-        data.experience.append(Experience())
-        st.rerun()
+    # Modal-like form for adding experience
+    if st.session_state['show_exp_form']:
+        with st.form("add_experience_form", clear_on_submit=True):
+            st.markdown("**Add New Work Experience**")
+            col1, col2 = st.columns(2)
+            with col1:
+                company = st.text_input("Company", key="modal_exp_company")
+                position = st.text_input("Position", key="modal_exp_position")
+            with col2:
+                duration = st.text_input("Duration (e.g., Jan 2020 - Dec 2023)", key="modal_exp_duration")
+
+            desc = st.text_area("Responsibilities & Achievements (one per line)", key="modal_exp_desc", height=100)
+            skills = st.text_area("Skills Used (one per line)", key="modal_exp_skills", height=80)
+
+            col_submit, col_cancel = st.columns(2)
+            with col_submit:
+                submitted = st.form_submit_button("Add Experience", type="primary", use_container_width=True)
+            with col_cancel:
+                cancel = st.form_submit_button("Cancel", use_container_width=True)
+
+            if submitted:
+                description_list = [d.strip() for d in desc.splitlines() if d.strip()]
+                skills_list = [s.strip() for s in skills.splitlines() if s.strip()]
+                new_exp = Experience(
+                    company=company.strip() or None,
+                    position=position.strip() or None,
+                    duration=duration.strip() or None,
+                    description=description_list,
+                    skills_used=skills_list
+                )
+                if is_experience_filled(new_exp):
+                    data.experience.append(new_exp)
+                    st.session_state['show_exp_form'] = False
+                    st.rerun()
+                else:
+                    st.error("⚠️ Please fill in at least one field (company, position, duration, description, or skills)")
+            elif cancel:
+                st.session_state['show_exp_form'] = False
+                st.rerun()
+
+    if st.button("➕ Add Experience", key="show_exp_form_btn", use_container_width=True):
+        st.session_state['show_exp_form'] = True
 
     st.divider()
 
@@ -150,6 +202,23 @@ def render_resume_data_editor(resume_data: ResumeData) -> ResumeData:
     st.subheader("🎓 Education")
     if not data.education:
         data.education = []
+
+
+    def is_education_filled(edu):
+        return any([
+            getattr(edu, 'institution', None) and edu.institution.strip(),
+            getattr(edu, 'degree', None) and edu.degree.strip(),
+            getattr(edu, 'field', None) and edu.field.strip(),
+            getattr(edu, 'graduation_date', None) and edu.graduation_date.strip(),
+            getattr(edu, 'gpa', None) and edu.gpa.strip(),
+            getattr(edu, 'description', None) and any(d.strip() for d in edu.description)
+        ])
+
+    # Modal-like form state
+    if 'show_edu_form' not in st.session_state:
+        st.session_state['show_edu_form'] = False
+    if 'edu_form_data' not in st.session_state:
+        st.session_state['edu_form_data'] = {}
 
     for i, edu in enumerate(data.education):
         with st.expander(f"Education {i+1}: {edu.degree or 'New Entry'} at {edu.institution or ''}"):
@@ -187,7 +256,7 @@ def render_resume_data_editor(resume_data: ResumeData) -> ResumeData:
             desc_df = pd.DataFrame({"Description": edu.description or []})
             edited_desc = st.data_editor(
                 desc_df,
-                use_container_width=True,
+                width='stretch',
                 num_rows="dynamic",
                 key=f"edu_desc_{i}"
             )
@@ -197,10 +266,50 @@ def render_resume_data_editor(resume_data: ResumeData) -> ResumeData:
                 data.education.pop(i)
                 st.rerun()
 
-    # Add new education button
-    if st.button("➕ Add Education", use_container_width=True):
-        data.education.append(Education())
-        st.rerun()
+    # Modal-like form for adding education
+    if st.session_state['show_edu_form']:
+        with st.form("add_education_form", clear_on_submit=True):
+            st.markdown("**Add New Education**")
+            col1, col2 = st.columns(2)
+            with col1:
+                institution = st.text_input("Institution", key="modal_edu_institution")
+                degree = st.text_input("Degree", key="modal_edu_degree")
+            with col2:
+                field = st.text_input("Field of Study", key="modal_edu_field")
+                graduation_date = st.text_input("Graduation Date", key="modal_edu_grad_date")
+            gpa = st.text_input("GPA", key="modal_edu_gpa")
+            desc = st.text_area("Description (one per line)", key="modal_edu_desc", height=100)
+
+            col_submit, col_cancel = st.columns(2)
+            with col_submit:
+                submitted = st.form_submit_button("Add Education", type="primary", use_container_width=True)
+            with col_cancel:
+                cancel = st.form_submit_button("Cancel", use_container_width=True)
+
+            if submitted:
+                description_list = [d.strip() for d in desc.splitlines() if d.strip()]
+                new_edu = Education(
+                    institution=institution.strip() or None,
+                    degree=degree.strip() or None,
+                    field=field.strip() or None,
+                    graduation_date=graduation_date.strip() or None,
+                    gpa=gpa.strip() or None,
+                    description=description_list
+                )
+                if is_education_filled(new_edu):
+                    data.education.append(new_edu)
+                    st.session_state['show_edu_form'] = False
+                    st.rerun()
+                else:
+                    st.error("⚠️ Please fill in at least one field (institution, degree, field, graduation date, GPA, or description)")
+            elif cancel:
+                st.session_state['show_edu_form'] = False
+                st.rerun()
+
+
+
+    if st.button("➕ Add Education", key="show_edu_form_btn", use_container_width=True):
+        st.session_state['show_edu_form'] = True
 
     st.divider()
 
@@ -209,7 +318,7 @@ def render_resume_data_editor(resume_data: ResumeData) -> ResumeData:
     certs_df = pd.DataFrame({"Certification": data.certifications or []})
     edited_certs = st.data_editor(
         certs_df,
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="certifications_editor"
     )
@@ -222,12 +331,17 @@ def render_resume_data_editor(resume_data: ResumeData) -> ResumeData:
     langs_df = pd.DataFrame({"Language": data.languages or []})
     edited_langs = st.data_editor(
         langs_df,
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="languages_editor"
     )
     data.languages = edited_langs["Language"].tolist() if not edited_langs.empty else []
 
+
+
+    # Remove empty entries before returning
+    data.experience = [exp for exp in data.experience if is_experience_filled(exp)]
+    data.education = [edu for edu in data.education if is_education_filled(edu)]
     return data
 
 
@@ -285,7 +399,7 @@ def render_job_data_editor(job_data: JobDescriptionData) -> JobDescriptionData:
     req_skills_df = pd.DataFrame({"Skill": data.required_skills or []})
     edited_req_skills = st.data_editor(
         req_skills_df,
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="required_skills_editor"
     )
@@ -298,7 +412,7 @@ def render_job_data_editor(job_data: JobDescriptionData) -> JobDescriptionData:
     pref_skills_df = pd.DataFrame({"Skill": data.preferred_skills or []})
     edited_pref_skills = st.data_editor(
         pref_skills_df,
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="preferred_skills_editor"
     )
@@ -311,7 +425,7 @@ def render_job_data_editor(job_data: JobDescriptionData) -> JobDescriptionData:
     keywords_df = pd.DataFrame({"Keyword": data.keywords or []})
     edited_keywords = st.data_editor(
         keywords_df,
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="keywords_editor"
     )
@@ -324,7 +438,7 @@ def render_job_data_editor(job_data: JobDescriptionData) -> JobDescriptionData:
     edu_reqs_df = pd.DataFrame({"Requirement": data.education_requirements or []})
     edited_edu_reqs = st.data_editor(
         edu_reqs_df,
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="education_requirements_editor"
     )
@@ -371,7 +485,7 @@ def render_optimization_result_editor(opt_result: OptimizationResult) -> Optimiz
     recs_df = pd.DataFrame({"Recommendation": data.recommendations or []})
     edited_recs = st.data_editor(
         recs_df,
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="recommendations_editor"
     )
@@ -384,7 +498,7 @@ def render_optimization_result_editor(opt_result: OptimizationResult) -> Optimiz
     missing_kw_df = pd.DataFrame({"Keyword": data.missing_keywords or []})
     edited_missing_kw = st.data_editor(
         missing_kw_df,
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="missing_keywords_editor"
     )
@@ -397,7 +511,7 @@ def render_optimization_result_editor(opt_result: OptimizationResult) -> Optimiz
     improvements_df = pd.DataFrame({"Improvement": data.improvements or []})
     edited_improvements = st.data_editor(
         improvements_df,
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="improvements_editor"
     )

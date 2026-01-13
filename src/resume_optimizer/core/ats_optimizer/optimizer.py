@@ -1,18 +1,22 @@
 # src/resume_optimizer/core/ats_optimizer/optimizer.py
 """
 ATS Optimizer module for improving resume compatibility with ATS systems.
-Implements Strategy and Observer patterns with Gemini AI integration.
+Implements Strategy and Observer patterns with Gemini or Ollama AI integration.
 """
 
 import logging
 import re
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Literal
 from dataclasses import dataclass
 from enum import Enum
 
 from ..models import ResumeData, JobDescriptionData, OptimizationResult, OptimizationStatus, Experience
 from ...utils.exceptions import ValidationError, AIServiceError
 from ..ai_integration.gemini_client import GeminiClient
+
+
+# Type alias for AI backend selection
+AIBackend = Literal["gemini", "ollama", "auto"]
 
 
 class OptimizationRule(Enum):
@@ -587,20 +591,95 @@ class GeminiResumeOptimizer:
 
 
 class ATSOptimizer:
-    """Main ATS optimization engine with Gemini AI integration."""
+    """Main ATS optimization engine with Gemini or Ollama AI integration."""
 
-    def __init__(self, gemini_api_key: Optional[str] = None):
+    def __init__(
+        self,
+        gemini_api_key: Optional[str] = None,
+        ai_backend: AIBackend = "auto",
+        ollama_model: str = "llama3.1:8b"
+    ):
+        """
+        Initialize ATS Optimizer.
+
+        Args:
+            gemini_api_key: Optional Gemini API key
+            ai_backend: AI backend to use ("gemini", "ollama", or "auto")
+            ollama_model: Ollama model to use (default: llama3.1:8b)
+        """
         self.logger = logging.getLogger(__name__)
         self.compatibility_checker = ATSCompatibilityChecker()
         self.keyword_optimizer = KeywordOptimizer()
         self.scorer = ResumeScorer()
-        self.gemini_optimizer = GeminiResumeOptimizer(api_key=gemini_api_key)
 
-    def optimize(self, resume_data: ResumeData, job_data: JobDescriptionData, 
-                applicant_name: str, company_name: str) -> OptimizationResult:
-        """Perform comprehensive ATS optimization with Gemini AI."""
+        self.ai_backend = ai_backend
+        self.ollama_model = ollama_model
+        self.gemini_api_key = gemini_api_key
+
+        # Initialize the appropriate optimizer based on backend
+        self.gemini_optimizer = None
+        self.ollama_optimizer = None
+
+        self._initialize_ai_backend()
+
+    def _initialize_ai_backend(self) -> None:
+        """Initialize the appropriate AI backend based on configuration."""
+        import os
+
+        if self.ai_backend == "ollama":
+            self._init_ollama()
+        elif self.ai_backend == "gemini":
+            self._init_gemini()
+        elif self.ai_backend == "auto":
+            # Auto-select: prefer Ollama if available, fallback to Gemini
+            if self._is_ollama_available():
+                self._init_ollama()
+                self.logger.info("Auto-selected Ollama backend")
+            elif self.gemini_api_key or os.getenv("GOOGLE_API_KEY"):
+                self._init_gemini()
+                self.logger.info("Auto-selected Gemini backend")
+            else:
+                self.logger.warning("No AI backend available. Optimization will be limited.")
+
+    def _is_ollama_available(self) -> bool:
+        """Check if Ollama is available."""
         try:
-            self.logger.info(f"Starting optimization for {applicant_name} at {company_name}")
+            from ..ai_integration.ollama_client import check_ollama_available
+            return check_ollama_available()
+        except Exception:
+            return False
+
+    def _init_ollama(self) -> None:
+        """Initialize Ollama backend."""
+        try:
+            from .ollama_optimizer import OllamaResumeOptimizer
+            self.ollama_optimizer = OllamaResumeOptimizer(model=self.ollama_model)
+            self.active_backend = "ollama"
+            self.logger.info(f"Initialized Ollama optimizer with model: {self.ollama_model}")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Ollama: {e}")
+            self.ollama_optimizer = None
+
+    def _init_gemini(self) -> None:
+        """Initialize Gemini backend."""
+        try:
+            self.gemini_optimizer = GeminiResumeOptimizer(api_key=self.gemini_api_key)
+            self.active_backend = "gemini"
+            self.logger.info("Initialized Gemini optimizer")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Gemini: {e}")
+            self.gemini_optimizer = None
+
+    def get_active_backend(self) -> str:
+        """Get the currently active AI backend."""
+        return getattr(self, 'active_backend', 'none')
+
+    def optimize(self, resume_data: ResumeData, job_data: JobDescriptionData,
+                applicant_name: str, company_name: str) -> OptimizationResult:
+        """Perform comprehensive ATS optimization with AI (Ollama or Gemini)."""
+        try:
+            backend = self.get_active_backend()
+            self.logger.info(f"Starting optimization for {applicant_name} at {company_name} using {backend}")
             result = OptimizationResult(status=OptimizationStatus.PROCESSING)
 
             # Calculate original scores
@@ -615,8 +694,8 @@ class ATSOptimizer:
             keyword_analysis = self.keyword_optimizer.optimize_keywords(resume_data, job_data)
             result.missing_keywords = keyword_analysis['missing_keywords']
 
-            # Create AI-optimized resume
-            result.optimized_resume = self._create_gemini_optimized_resume(
+            # Create AI-optimized resume using the active backend
+            result.optimized_resume = self._create_ai_optimized_resume(
                 resume_data, job_data, applicant_name, company_name
             )
 
@@ -635,13 +714,60 @@ class ATSOptimizer:
             )
 
             result.status = OptimizationStatus.COMPLETED
-            self.logger.info(f"Optimization completed successfully. Score improved from {result.original_score:.1f} to {result.optimized_score:.1f}")
+            self.logger.info(f"Optimization completed successfully using {backend}. Score: {result.original_score:.1f} -> {result.optimized_score:.1f}")
 
             return result
 
         except Exception as e:
             self.logger.error(f"Optimization failed: {e}")
             result = OptimizationResult(status=OptimizationStatus.FAILED)
+            raise e
+
+    def _create_ai_optimized_resume(
+        self,
+        resume_data: ResumeData,
+        job_data: JobDescriptionData,
+        applicant_name: str,
+        company_name: str
+    ) -> ResumeData:
+        """Create an AI-optimized resume using the active backend."""
+        if self.ollama_optimizer:
+            return self._create_ollama_optimized_resume(
+                resume_data, job_data, applicant_name, company_name
+            )
+        elif self.gemini_optimizer:
+            return self._create_gemini_optimized_resume(
+                resume_data, job_data, applicant_name, company_name
+            )
+        else:
+            # No AI backend available, return original with minor improvements
+            self.logger.warning("No AI backend available, returning original resume with basic improvements")
+            optimized = resume_data.model_copy(deep=True)
+            if applicant_name:
+                optimized.contact_info.name = applicant_name
+            return optimized
+
+    def _create_ollama_optimized_resume(
+        self,
+        resume_data: ResumeData,
+        job_data: JobDescriptionData,
+        applicant_name: str,
+        company_name: str
+    ) -> ResumeData:
+        """Create an AI-optimized version of the resume using Ollama."""
+        try:
+            optimized = self.ollama_optimizer.optimize_full_resume(
+                resume_data, job_data, applicant_name
+            )
+
+            # Update raw text with optimized content
+            optimized.raw_text = self._generate_optimized_raw_text(optimized)
+
+            self.logger.info("Resume optimization with Ollama completed successfully")
+            return optimized
+
+        except Exception as e:
+            self.logger.error(f"Failed to create Ollama-optimized resume: {e}")
             raise e
 
     def _create_gemini_optimized_resume(self, resume_data: ResumeData, job_data: JobDescriptionData, 
@@ -741,13 +867,31 @@ class ATSOptimizer:
 
         return "\n".join(sections)
 
-    def _generate_comprehensive_recommendations(self, ats_check: Dict, keyword_analysis: Dict, 
+    def _get_ai_recommendations(
+        self,
+        resume_data: ResumeData,
+        job_data: JobDescriptionData,
+        missing_keywords: List[str]
+    ) -> List[str]:
+        """Get AI-generated recommendations from the active backend."""
+        if self.ollama_optimizer:
+            return self.ollama_optimizer.generate_optimization_recommendations(
+                resume_data, job_data, missing_keywords
+            )
+        elif self.gemini_optimizer:
+            return self.gemini_optimizer.generate_optimization_recommendations(
+                resume_data, job_data, missing_keywords
+            )
+        else:
+            return ["Incorporate more job-relevant keywords naturally into your resume"]
+
+    def _generate_comprehensive_recommendations(self, ats_check: Dict, keyword_analysis: Dict,
                                              resume_data: ResumeData, job_data: JobDescriptionData) -> List[str]:
-        """Generate comprehensive optimization recommendations using Gemini AI."""
+        """Generate comprehensive optimization recommendations using AI (Ollama or Gemini)."""
         recommendations = []
 
-        # Get AI-generated recommendations
-        ai_recommendations = self.gemini_optimizer.generate_optimization_recommendations(
+        # Get AI-generated recommendations from active backend
+        ai_recommendations = self._get_ai_recommendations(
             resume_data, job_data, keyword_analysis['missing_keywords']
         )
         recommendations.extend(ai_recommendations)

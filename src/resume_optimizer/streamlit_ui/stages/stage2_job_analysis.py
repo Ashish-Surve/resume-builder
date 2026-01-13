@@ -3,12 +3,12 @@
 import streamlit as st
 import logging
 
-from resume_optimizer.core.job_analyzer import JobDescriptionAnalyzer, GeminiJobAnalyzer
+from resume_optimizer.core.job_analyzer import JobDescriptionAnalyzer, GeminiJobAnalyzer, OllamaJobAnalyzer
 from resume_optimizer.streamlit_ui.components.editors import render_job_data_editor
 from resume_optimizer.streamlit_ui.components.validators import render_validation_results
 from resume_optimizer.streamlit_ui.state.validators import validate_job_data
 from resume_optimizer.streamlit_ui.state.session_manager import SessionStateManager
-from resume_optimizer.streamlit_ui.utils import get_gemini_api_key, has_gemini_api_key
+from resume_optimizer.streamlit_ui.utils import get_gemini_api_key, has_gemini_api_key, is_ollama_available
 
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,13 @@ def render_stage2_job_analysis() -> None:
     analyzer_labels = {}
     analyzer_labels["standard"] = "Standard Analyzer (keyword matching)"
 
+    # Add Ollama as first option if available (Recommended)
+    if is_ollama_available():
+        analyzer_options.insert(0, "ollama")
+        analyzer_labels["ollama"] = "Ollama Analyzer (Recommended - local AI)"
+    else:
+        analyzer_labels["ollama"] = "Ollama Analyzer (not running)"
+
     if has_gemini_api_key():
         analyzer_options.append("gemini")
         analyzer_labels["gemini"] = "Gemini Analyzer (AI-powered)"
@@ -65,20 +72,27 @@ def render_stage2_job_analysis() -> None:
         analyzer_options,
         format_func=lambda x: analyzer_labels[x],
         key="stage2_analyzer_choice",
-        help="Standard is fast and works offline. Gemini provides AI-powered analysis (requires API key in .env)."
+        help="Ollama runs locally for privacy. Standard is fast and works offline. Gemini provides cloud AI-powered analysis."
     )
 
     st.divider()
 
     # Analyze button
     if st.session_state.job_description_text.strip():
-        if st.button("🔍 Analyze Job Description", type="primary", use_container_width=True):
+        if st.button("🔍 Analyze Job Description", type="primary", width='stretch'):
             with st.spinner("Analyzing job description..."):
                 try:
                     job_text = st.session_state.job_description_text
 
                     if st.session_state.analyzer_choice == "standard":
                         analyzer = JobDescriptionAnalyzer()
+                    elif st.session_state.analyzer_choice == "ollama":
+                        # Ollama analyzer (local)
+                        if not is_ollama_available():
+                            st.error("❌ Ollama server is not running")
+                            st.info("Please start Ollama with `ollama serve` or select Standard Analyzer instead.")
+                            st.stop()
+                        analyzer = OllamaJobAnalyzer()
                     else:
                         # Gemini analyzer with API key from .env
                         api_key = get_gemini_api_key()
@@ -120,9 +134,9 @@ def render_stage2_job_analysis() -> None:
         st.divider()
 
         # Confirm button
-        if st.button("✅ Confirm and Continue", type="primary", use_container_width=True, disabled=not is_valid):
+        if st.button("✅ Confirm and Continue", type="primary", width='stretch', disabled=not is_valid):
             st.session_state.stage2_confirmed = True
-            SessionStateManager.mark_job_edited()
+            # Don't mark as edited during confirmation - only when actually edited later
             st.session_state.current_stage = 2
             st.rerun()
 
@@ -134,4 +148,4 @@ def render_stage2_job_analysis() -> None:
             st.session_state.current_stage = 0
             st.rerun()
     with col2:
-        st.button("➡️ Continue", disabled=True, use_container_width=True)
+        st.button("➡️ Continue", disabled=True, width='stretch')

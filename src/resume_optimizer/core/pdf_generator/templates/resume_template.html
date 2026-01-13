@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>{{ contact_info.name or 'Resume' }}</title>
+</head>
+<body>
+    <div class="resume">
+        <!-- Header -->
+        <header class="header">
+            {% if contact_info.name %}
+            <h1 class="name">{{ contact_info.name }}</h1>
+            {% endif %}
+            <div class="contact-row">
+                {% if contact_info.email %}
+                <span class="contact-item">{{ contact_info.email }}</span>
+                {% endif %}
+                {% if contact_info.phone %}
+                {% if contact_info.email %}<span class="separator">•</span>{% endif %}
+                <span class="contact-item">{{ contact_info.phone }}</span>
+                {% endif %}
+                {% if contact_info.address %}
+                {% if contact_info.email or contact_info.phone %}<span class="separator">•</span>{% endif %}
+                <span class="contact-item">{{ contact_info.address }}</span>
+                {% endif %}
+                {% if contact_info.linkedin %}
+                {% if contact_info.email or contact_info.phone or contact_info.address %}<span class="separator">•</span>{% endif %}
+                <span class="contact-item">{{ contact_info.linkedin }}</span>
+                {% endif %}
+                {% if contact_info.github %}
+                {% if contact_info.email or contact_info.phone or contact_info.address or contact_info.linkedin %}<span class="separator">•</span>{% endif %}
+                <span class="contact-item">{{ contact_info.github }}</span>
+                {% endif %}
+            </div>
+        </header>
+
+        <!-- Professional Summary -->
+        {% if summary %}
+        <section class="section">
+            <h2 class="section-title">Professional Summary</h2>
+            <p class="summary-text">{{ summary }}</p>
+        </section>
+        {% endif %}
+
+        <!-- Skills -->
+        {% if skills %}
+        <section class="section">
+            <h2 class="section-title">Skills</h2>
+            <div class="skills-container">
+                {% if skills is mapping %}
+                    {% for category, skill_list in skills.items() %}
+                    <div class="skill-category">
+                        <span class="skill-category-name">{{ category }}:</span>
+                        <span class="skill-category-items">
+                            {% for skill in skill_list %}
+                            <span class="skill-tag">{{ skill }}</span>
+                            {% endfor %}
+                        </span>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    {% for skill in skills %}
+                    <span class="skill-tag">{{ skill }}</span>
+                    {% endfor %}
+                {% endif %}
+            </div>
+        </section>
+        {% endif %}
+
+        <!-- Professional Experience -->
+        {% if experience %}
+        <section class="section">
+            <h2 class="section-title">Professional Experience</h2>
+            {% for job in experience %}
+            <div class="job">
+                <div class="job-header">
+                    <div class="job-title-company">
+                        {% if job.position %}
+                        <span class="job-title">{{ job.position }}</span>
+                        {% endif %}
+                        {% if job.company %}
+                        <span class="company">{{ job.company }}</span>
+                        {% endif %}
+                    </div>
+                    {% if job.duration or (job.start_date and job.end_date) %}
+                    <span class="job-dates">
+                        {{ job.duration or (job.start_date ~ ' - ' ~ (job.end_date or 'Present')) }}
+                    </span>
+                    {% endif %}
+                </div>
+                {% if job.description %}
+                <ul class="job-bullets">
+                    {% for bullet in job.description %}
+                    <li>{{ bullet }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </section>
+        {% endif %}
+
+        <!-- Education -->
+        {% if education %}
+        <section class="section">
+            <h2 class="section-title">Education</h2>
+            {% for edu in education %}
+            <div class="education-item">
+                <div class="edu-header">
+                    <div class="edu-left">
+                        {% if edu.degree %}
+                        <span class="degree">{{ edu.degree }}</span>
+                        {% endif %}
+                        {% if edu.field %}
+                        <span class="field"> in {{ edu.field }}</span>
+                        {% endif %}
+                    </div>
+                    {% if edu.graduation_date %}
+                    <span class="edu-dates">{{ edu.graduation_date }}</span>
+                    {% endif %}
+                </div>
+                {% if edu.institution %}
+                <div class="institution">{{ edu.institution }}</div>
+                {% endif %}
+                {% if edu.gpa %}
+                <div class="gpa">GPA: {{ edu.gpa }}</div>
+                {% endif %}
+                {% if edu.description %}
+                <ul class="edu-bullets">
+                    {% for item in edu.description %}
+                    <li>{{ item }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </section>
+        {% endif %}
+
+        <!-- Certifications -->
+        {% if certifications %}
+        <section class="section">
+            <h2 class="section-title">Certifications</h2>
+            <ul class="cert-list">
+                {% for cert in certifications %}
+                <li>{{ cert }}</li>
+                {% endfor %}
+            </ul>
+        </section>
+        {% endif %}
+
+        <!-- Languages -->
+        {% if languages %}
+        <section class="section">
+            <h2 class="section-title">Languages</h2>
+            <div class="languages-container">
+                {% for lang in languages %}
+                <span class="language-item">{{ lang }}</span>
+                {% if not loop.last %}<span class="separator">•</span>{% endif %}
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+    </div>
+</body>
+</html>

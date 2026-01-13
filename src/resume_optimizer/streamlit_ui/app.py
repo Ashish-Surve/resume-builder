@@ -4,6 +4,13 @@ Main Streamlit application for Resume Optimizer.
 4-stage workflow: Parse → Analyze → Optimize → Download
 """
 
+import os
+import sys
+
+# Set library path for WeasyPrint on macOS
+if sys.platform == "darwin" and os.path.exists("/opt/homebrew/lib"):
+    os.environ["DYLD_LIBRARY_PATH"] = "/opt/homebrew/lib:" + os.environ.get("DYLD_LIBRARY_PATH", "")
+
 import streamlit as st
 
 # Configure page FIRST - before any other imports or st commands
